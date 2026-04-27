@@ -26,6 +26,7 @@ STARTUP_REQUIRED_CONFIGS = [
 # 可在配置面板中编辑的配置项（key, 提示, 默认值, 是否可选）
 REQUIRED_CONFIGS = [
     ("MAIL_PROVIDER", "邮箱服务提供者（cloudmail/cloudflare_temp_email）", "cloudmail", True),
+    ("AUTOTEAM_INSTANCE_ID", "AutoTeam 实例 ID（多实例共用 Sub2API 时需唯一）", "default", True),
     ("CLOUDMAIL_BASE_URL", "CloudMail API 地址", "", True),
     ("CLOUDMAIL_EMAIL", "CloudMail 登录邮箱", "", True),
     ("CLOUDMAIL_PASSWORD", "CloudMail 登录密码", "", True),

@@ -111,6 +111,7 @@ def test_build_extra_includes_codex_usage_snapshot(monkeypatch):
     assert extra["autoteam_email"] == "tmp@example.com"
     assert extra["autoteam_auth_file"] == "sub2api-codex-tmp@example.com-team-123.json"
     assert extra["autoteam_source"] == "autoteam"
+    assert extra["autoteam_instance_id"] == "default"
     assert extra["email"] == "tmp@example.com"
     assert extra["codex_5h_used_percent"] == 42
     assert extra["codex_5h_reset_after_seconds"] == 3600
@@ -131,6 +132,35 @@ def test_attach_group_metadata_records_autoteam_group_binding():
 
     assert extra["autoteam_sub2api_group_ids"] == [7]
     assert extra["autoteam_sub2api_group_names"] == ["Team Pool"]
+
+
+def test_build_extra_records_configured_instance_id(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+
+    extra = sub2api_sync._build_extra("tmp@example.com", "codex-tmp@example.com-team-123.json", kind="pool")
+
+    assert extra["autoteam_instance_id"] == "team-a"
+
+
+def test_is_managed_account_filters_by_current_instance(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    base = {
+        "extra": {
+            "autoteam_source": "autoteam",
+            "autoteam_kind": "pool",
+        }
+    }
+
+    assert sub2api_sync._is_managed_account(
+        {"extra": {**base["extra"], "autoteam_instance_id": "team-a"}}, kind="pool"
+    )
+    assert not sub2api_sync._is_managed_account(
+        {"extra": {**base["extra"], "autoteam_instance_id": "team-b"}}, kind="pool"
+    )
+    assert not sub2api_sync._is_managed_account(base, kind="pool")
+
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "")
+    assert sub2api_sync._is_managed_account(base, kind="pool")
 
 
 def test_resolve_group_binding_supports_name_and_id(monkeypatch):
@@ -227,6 +257,52 @@ def test_remote_auth_file_candidates_include_legacy_and_prefixed_names():
         "codex-a.json",
         "sub2api-codex-a.json",
     }
+
+
+def test_dedupe_managed_accounts_ignores_other_instances(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    deleted = []
+
+    def fake_delete_account(token, account, **kwargs):
+        deleted.append((account["id"], kwargs["label"]))
+        return True
+
+    monkeypatch.setattr(sub2api_sync, "_delete_account", fake_delete_account)
+    items = [
+        {
+            "id": 1,
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "pool",
+                "autoteam_email": "tmp@example.com",
+                "autoteam_instance_id": "team-a",
+            },
+        },
+        {
+            "id": 2,
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "pool",
+                "autoteam_email": "tmp@example.com",
+                "autoteam_instance_id": "team-a",
+            },
+        },
+        {
+            "id": 3,
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "pool",
+                "autoteam_email": "tmp@example.com",
+                "autoteam_instance_id": "team-b",
+            },
+        },
+    ]
+
+    existing_by_email, duplicates_deleted = sub2api_sync._dedupe_managed_accounts("token", items, kind="pool")
+
+    assert existing_by_email["tmp@example.com"]["id"] == 2
+    assert duplicates_deleted == 1
+    assert deleted == [(1, "删除重复账号")]
 
 
 def test_sync_to_sub2api_preserves_existing_manual_settings_when_overwrite_disabled(monkeypatch, tmp_path):
@@ -444,6 +520,64 @@ def test_sync_to_sub2api_does_not_resolve_proxy_when_only_deleting_non_active_ac
     assert deleted == [(12, "删除非 active 账号")]
 
 
+def test_sync_to_sub2api_does_not_delete_non_active_accounts_from_other_instances(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    monkeypatch.setattr(sub2api_sync, "SUB2API_PROXY", "")
+    monkeypatch.setattr(sub2api_sync, "_login", lambda: "token")
+    monkeypatch.setattr(sub2api_sync, "_resolve_group_binding", lambda token: ([], []))
+    remote_accounts = [
+        {
+            "id": 12,
+            "status": "active",
+            "credentials": {"email": "tmp@example.com"},
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "pool",
+                "autoteam_email": "tmp@example.com",
+                "autoteam_instance_id": "team-a",
+            },
+            "group_ids": [],
+        },
+        {
+            "id": 13,
+            "status": "active",
+            "credentials": {"email": "tmp@example.com"},
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "pool",
+                "autoteam_email": "tmp@example.com",
+                "autoteam_instance_id": "team-b",
+            },
+            "group_ids": [],
+        },
+    ]
+    monkeypatch.setattr(sub2api_sync, "_list_openai_oauth_accounts", lambda token: remote_accounts)
+    monkeypatch.setattr(
+        "autoteam.accounts.load_accounts",
+        lambda: [
+            {
+                "email": "tmp@example.com",
+                "status": "standby",
+                "auth_file": "",
+                "last_quota": None,
+            }
+        ],
+    )
+
+    deleted = []
+
+    def fake_delete_account(token, account, **kwargs):
+        deleted.append((account["id"], kwargs["label"]))
+        return {"ok": True}
+
+    monkeypatch.setattr(sub2api_sync, "_delete_account", fake_delete_account)
+
+    result = sub2api_sync.sync_to_sub2api()
+
+    assert result["deleted"] == 1
+    assert deleted == [(12, "删除非 active 账号")]
+
+
 def test_sync_to_sub2api_resolves_proxy_name_for_new_pool_accounts(monkeypatch, tmp_path):
     monkeypatch.setattr(sub2api_sync, "SUB2API_PROXY", "Residential Pool")
     monkeypatch.setattr(sub2api_sync, "_login", lambda: "token")
@@ -537,3 +671,148 @@ def test_sync_main_codex_to_sub2api_creates_account_with_managed_defaults(monkey
     assert captured["extra"]["openai_oauth_responses_websockets_v2_enabled"] is True
     assert captured["extra"]["openai_passthrough"] is True
     assert "proxy_id" not in captured
+
+
+def test_sync_main_codex_to_sub2api_does_not_delete_other_instance_main(monkeypatch, tmp_path):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    monkeypatch.setattr(sub2api_sync, "_login", lambda: "token")
+    monkeypatch.setattr(sub2api_sync, "_resolve_group_binding", lambda token: ([], []))
+    remote_accounts = [
+        {
+            "id": 10,
+            "name": "old-main-a",
+            "credentials": {"email": "old-a@example.com"},
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "main",
+                "autoteam_email": "old-a@example.com",
+                "autoteam_instance_id": "team-a",
+            },
+        },
+        {
+            "id": 20,
+            "name": "main-b",
+            "credentials": {"email": "main-b@example.com"},
+            "extra": {
+                "autoteam_source": "autoteam",
+                "autoteam_kind": "main",
+                "autoteam_email": "main-b@example.com",
+                "autoteam_instance_id": "team-b",
+            },
+        },
+    ]
+    monkeypatch.setattr(sub2api_sync, "_list_openai_oauth_accounts", lambda token: remote_accounts)
+
+    auth_path = tmp_path / "main.json"
+    auth_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sub2api_sync,
+        "_load_auth_data",
+        lambda path: {
+            "email": "main-a@example.com",
+            "access_token": "at-1",
+            "refresh_token": "rt-1",
+        },
+    )
+    monkeypatch.setattr(sub2api_sync, "_create_account", lambda token, **kwargs: {"id": 99})
+    deleted = []
+
+    def fake_delete_account(token, account, **kwargs):
+        deleted.append((account["id"], kwargs["label"]))
+        return True
+
+    monkeypatch.setattr(sub2api_sync, "_delete_account", fake_delete_account)
+
+    result = sub2api_sync.sync_main_codex_to_sub2api(str(auth_path))
+
+    assert result["account_id"] == 99
+    assert result["deleted_old"] == [10]
+    assert deleted == [(10, "删除旧主号账号")]
+
+
+def test_delete_main_codex_from_sub2api_filters_current_instance(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    monkeypatch.setattr(sub2api_sync, "_login", lambda: "token")
+    monkeypatch.setattr(
+        sub2api_sync,
+        "_list_openai_oauth_accounts",
+        lambda token: [
+            {
+                "id": 10,
+                "name": "main-a",
+                "extra": {
+                    "autoteam_source": "autoteam",
+                    "autoteam_kind": "main",
+                    "autoteam_instance_id": "team-a",
+                },
+            },
+            {
+                "id": 20,
+                "name": "main-b",
+                "extra": {
+                    "autoteam_source": "autoteam",
+                    "autoteam_kind": "main",
+                    "autoteam_instance_id": "team-b",
+                },
+            },
+        ],
+    )
+    deleted = []
+
+    def fake_delete_account(token, account, **kwargs):
+        deleted.append((account["id"], kwargs["label"]))
+        return True
+
+    monkeypatch.setattr(sub2api_sync, "_delete_account", fake_delete_account)
+
+    result = sub2api_sync.delete_main_codex_from_sub2api()
+
+    assert result == {"deleted": ["main-a"], "count": 1}
+    assert deleted == [(10, "删除主号账号")]
+
+
+def test_delete_account_from_sub2api_filters_current_instance(monkeypatch):
+    monkeypatch.setattr(sub2api_sync, "AUTOTEAM_INSTANCE_ID", "team-a")
+    monkeypatch.setattr(sub2api_sync, "_login", lambda: "token")
+    monkeypatch.setattr(
+        sub2api_sync,
+        "_list_openai_oauth_accounts",
+        lambda token: [
+            {
+                "id": 10,
+                "name": "pool-a",
+                "credentials": {"email": "tmp@example.com"},
+                "extra": {
+                    "autoteam_source": "autoteam",
+                    "autoteam_kind": "pool",
+                    "autoteam_email": "tmp@example.com",
+                    "autoteam_auth_file": "sub2api-codex-a.json",
+                    "autoteam_instance_id": "team-a",
+                },
+            },
+            {
+                "id": 20,
+                "name": "pool-b",
+                "credentials": {"email": "tmp@example.com"},
+                "extra": {
+                    "autoteam_source": "autoteam",
+                    "autoteam_kind": "pool",
+                    "autoteam_email": "tmp@example.com",
+                    "autoteam_auth_file": "sub2api-codex-b.json",
+                    "autoteam_instance_id": "team-b",
+                },
+            },
+        ],
+    )
+    deleted = []
+
+    def fake_delete_account(token, account, **kwargs):
+        deleted.append((account["id"], kwargs["label"]))
+        return True
+
+    monkeypatch.setattr(sub2api_sync, "_delete_account", fake_delete_account)
+
+    result = sub2api_sync.delete_account_from_sub2api("tmp@example.com", auth_names=["codex-b.json"])
+
+    assert result == {"deleted": ["pool-a"], "count": 1}
+    assert deleted == [(10, "删除账号")]
