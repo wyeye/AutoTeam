@@ -198,6 +198,8 @@ def test_get_runtime_config_returns_current_values_from_env_file(tmp_path, monke
     assert result["configured"] is True
     assert fields["CLOUDMAIL_EMAIL"]["value"] == "admin@example.com"
     assert fields["CLOUDMAIL_EMAIL"]["runtime_required"] is True
+    assert fields["AUTOTEAM_INSTANCE_ID"]["value"] == "default"
+    assert fields["AUTOTEAM_INSTANCE_ID"]["runtime_required"] is False
     assert fields["CPA_KEY"]["value"] == "key-1"
     assert fields["CPA_KEY"]["runtime_required"] is True
     assert fields["SUB2API_CONCURRENCY"]["value"] == "12"
@@ -353,6 +355,20 @@ def test_put_runtime_config_accepts_numeric_sub2api_proxy(monkeypatch):
 
     assert result["message"] == "配置保存成功"
     assert written["SUB2API_PROXY"] == "15"
+
+
+def test_put_runtime_config_normalizes_autoteam_instance_id(monkeypatch):
+    written = {}
+
+    monkeypatch.setattr("autoteam.setup_wizard._write_env", lambda key, value: written.setdefault(key, value))
+    monkeypatch.setattr("importlib.reload", lambda module: module)
+    monkeypatch.setattr(api, "API_KEY", "old-key")
+    monkeypatch.setenv("API_KEY", "old-key")
+
+    result = api.put_runtime_config(api.SetupConfig(API_KEY="old-key", AUTOTEAM_INSTANCE_ID="  team-a  "))
+
+    assert result["message"] == "配置保存成功"
+    assert written["AUTOTEAM_INSTANCE_ID"] == "team-a"
 
 
 def test_post_account_login_rejects_non_team_plan(monkeypatch):

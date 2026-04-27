@@ -77,6 +77,7 @@ def check_auth(request: Request):
 
 class SetupConfig(BaseModel):
     MAIL_PROVIDER: str = "cloudmail"
+    AUTOTEAM_INSTANCE_ID: str = "default"
     CLOUDMAIL_BASE_URL: str = ""
     CLOUDMAIL_EMAIL: str = ""
     CLOUDMAIL_PASSWORD: str = ""
@@ -111,6 +112,7 @@ class SourceConfig(BaseModel):
 
 
 _RUNTIME_CONFIG_CLEARABLE_FIELDS = {
+    "AUTOTEAM_INSTANCE_ID",
     "SUB2API_GROUP",
     "SUB2API_PROXY",
     "SUB2API_MODEL_WHITELIST",
@@ -130,6 +132,7 @@ _SYNC_TARGET_TOGGLE_KEYS = ("SYNC_TARGET_CPA", "SYNC_TARGET_SUB2API")
 
 _ALL_RUNTIME_ENV_KEYS = [
     "MAIL_PROVIDER",
+    "AUTOTEAM_INSTANCE_ID",
     "CLOUDMAIL_BASE_URL",
     "CLOUDMAIL_EMAIL",
     "CLOUDMAIL_PASSWORD",
@@ -543,6 +546,7 @@ def _validate_runtime_optional_values(values: dict[str, str]):
             return
         normalized[key] = raw
 
+    normalized["AUTOTEAM_INSTANCE_ID"] = str(normalized.get("AUTOTEAM_INSTANCE_ID", "") or "").strip() or "default"
     _normalize_sub2api_proxy("SUB2API_PROXY")
     _normalize_positive_int("SUB2API_CONCURRENCY")
     _normalize_int("SUB2API_PRIORITY")

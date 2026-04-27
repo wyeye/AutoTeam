@@ -212,6 +212,32 @@
           </div>
         </div>
 
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div class="mb-4">
+            <div class="text-sm font-medium text-white">AutoTeam 实例隔离</div>
+            <div class="mt-1 text-xs leading-5 text-slate-400">
+              多个 AutoTeam 共用同一个 Sub2API 时，每个实例必须填写不同 ID，避免互相去重、删除或覆盖账号。
+            </div>
+          </div>
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div v-for="field in syncInstanceFields" :key="field.key" class="rounded-2xl border border-white/10 bg-slate-950/25 p-4">
+              <label class="mb-2 block text-sm font-medium text-slate-300">
+                {{ field.prompt }}
+                <span v-if="isRuntimeRequired(field)" class="text-red-400">*</span>
+                <div v-if="sub2apiFieldHint(field.key)" class="mt-1 font-mono text-[11px] font-normal text-slate-500 break-all">
+                  {{ sub2apiFieldHint(field.key) }}
+                </div>
+              </label>
+              <input
+                v-model="runtimeForm[field.key]"
+                :type="fieldInputType(field.key)"
+                :placeholder="field.default || ''"
+                class="input-dark"
+              />
+            </div>
+          </div>
+        </div>
+
         <div v-if="syncCpaEnabled" class="rounded-2xl border border-white/10 bg-white/5 p-5">
           <div class="mb-4">
             <div class="text-sm font-medium text-white">CPA</div>
@@ -498,6 +524,7 @@ const emit = defineEmits(['refresh', 'admin-progress'])
 const runtimeCategoryKeys = {
   cloudmail: ['MAIL_PROVIDER', 'CLOUDMAIL_BASE_URL', 'CLOUDMAIL_EMAIL', 'CLOUDMAIL_PASSWORD', 'CLOUDMAIL_DOMAIN', 'CF_TEMP_EMAIL_BASE_URL', 'CF_TEMP_EMAIL_ADMIN_PASSWORD', 'CF_TEMP_EMAIL_DOMAIN'],
   sync: [
+    'AUTOTEAM_INSTANCE_ID',
     'SYNC_TARGET_CPA',
     'SYNC_TARGET_SUB2API',
     'CPA_URL',
@@ -583,6 +610,7 @@ const sourceMessage = ref('')
 const sourceMessageClass = ref('')
 const runtimeRequiredKeys = new Set(['API_KEY'])
 const sub2apiFieldHints = {
+  AUTOTEAM_INSTANCE_ID: 'ENV: AUTOTEAM_INSTANCE_ID · extra.autoteam_instance_id',
   SUB2API_URL: 'ENV: SUB2API_URL · Sub2API API base URL',
   SUB2API_EMAIL: 'ENV: SUB2API_EMAIL · login.email',
   SUB2API_PASSWORD: 'ENV: SUB2API_PASSWORD · login.password',
@@ -617,6 +645,7 @@ function fieldsByKeys(keys) {
 
 const securityFields = computed(() => fieldsByKeys(runtimeCategoryKeys.security))
 const proxyFields = computed(() => fieldsByKeys(runtimeCategoryKeys.proxy))
+const syncInstanceFields = computed(() => fieldsByKeys(['AUTOTEAM_INSTANCE_ID']))
 const syncToggleFields = computed(() => fieldsByKeys(['SYNC_TARGET_CPA', 'SYNC_TARGET_SUB2API']))
 const selectedMailProvider = computed(() => String(runtimeForm.MAIL_PROVIDER || 'cloudmail').toLowerCase() === 'cloudflare_temp_email' ? 'cloudflare_temp_email' : 'cloudmail')
 const cloudmailProviderFields = computed(() => fieldsByKeys(['CLOUDMAIL_BASE_URL', 'CLOUDMAIL_EMAIL', 'CLOUDMAIL_PASSWORD', 'CLOUDMAIL_DOMAIN']))

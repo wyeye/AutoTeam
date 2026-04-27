@@ -18,6 +18,7 @@ cp .env.example .env
 | `CF_TEMP_EMAIL_BASE_URL` | Cloudflare Temp Email 后端 API 根地址 | 使用 Cloudflare Temp Email 时必填 |
 | `CF_TEMP_EMAIL_ADMIN_PASSWORD` | Cloudflare Temp Email 管理员密码 | 使用 Cloudflare Temp Email 时必填 |
 | `CF_TEMP_EMAIL_DOMAIN` | Cloudflare Temp Email 默认邮箱域名 | 使用 Cloudflare Temp Email 时必填 |
+| `AUTOTEAM_INSTANCE_ID` | AutoTeam 实例 ID，用于多个 AutoTeam 共用同一个 Sub2API 时隔离 managed 账号 | 否（默认 `default`；多实例时必须各不相同） |
 | `SYNC_TARGET_CPA` | 是否启用 CPA 同步（`true/false`） | 否 |
 | `CPA_URL` | CPA（CLIProxyAPI）地址 | 启用 CPA 时必填（默认 `http://127.0.0.1:8317`） |
 | `CPA_KEY` | CPA 管理密钥 | 启用 CPA 时必填 |
@@ -83,6 +84,23 @@ SUB2API_GROUP=12,Team Pool
 - 同步账号池账号时会自动带上这些分组
 - 同步主号 Codex 到 Sub2API 时也会自动带上这些分组
 - 更新时会保留账号原本手动绑定的其他分组，只替换 AutoTeam 自己管理的分组绑定
+
+## 多个 AutoTeam 共用一个 Sub2API
+
+如果多个 AutoTeam 对接同一个 Sub2API，必须为每个实例配置不同的 `AUTOTEAM_INSTANCE_ID`：
+
+```dotenv
+AUTOTEAM_INSTANCE_ID=team-a
+```
+
+AutoTeam 会把该值写入 Sub2API 账号的 `extra.autoteam_instance_id`，之后去重、删除非 active 账号、删除旧主号等操作只处理同一实例 ID 的 managed 账号。
+
+注意：
+
+- `SUB2API_GROUP` 只是分组绑定，不是隔离边界。
+- 未配置或留空时使用默认实例 `default`。
+- 旧版本创建且没有 `autoteam_instance_id` 的账号会被视为 `default` 实例。
+- 如果已经有多个未配置实例共用同一个 Sub2API，系统无法自动判断旧账号属于哪个实例；建议保留一个实例使用 `default` 管理旧账号，其他实例改用新 ID 后重新同步，并手动清理确认无主的旧账号。
 
 ## Sub2API 默认账号设置
 

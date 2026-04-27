@@ -143,6 +143,8 @@ CF_TEMP_EMAIL_ADMIN_PASSWORD=your_admin_password
 CF_TEMP_EMAIL_DOMAIN=email.example.com
 
 # 远端同步（可启用一个或两个）
+# 多个 AutoTeam 共用同一个 Sub2API 时，每个实例必须不同
+AUTOTEAM_INSTANCE_ID=default
 SYNC_TARGET_CPA=true
 CPA_URL=http://127.0.0.1:8317
 CPA_KEY=your_cpa_key

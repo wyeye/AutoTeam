@@ -70,6 +70,9 @@ CF_TEMP_EMAIL_DOMAIN = os.environ.get("CF_TEMP_EMAIL_DOMAIN", "")
 # ChatGPT Team 配置
 CHATGPT_ACCOUNT_ID = os.environ.get("CHATGPT_ACCOUNT_ID", "")
 
+# AutoTeam 实例隔离配置
+AUTOTEAM_INSTANCE_ID = _get_str_env("AUTOTEAM_INSTANCE_ID", "default") or "default"
+
 # CPA (CLIProxyAPI) 配置
 CPA_URL = os.environ.get("CPA_URL", "")
 CPA_KEY = os.environ.get("CPA_KEY", "")

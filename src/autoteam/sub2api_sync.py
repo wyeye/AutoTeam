@@ -13,6 +13,7 @@ import requests
 
 from autoteam.codex_auth import CODEX_CLIENT_ID
 from autoteam.config import (
+    AUTOTEAM_INSTANCE_ID,
     SUB2API_AUTO_PAUSE_ON_EXPIRED,
     SUB2API_CONCURRENCY,
     SUB2API_EMAIL,
@@ -40,8 +41,11 @@ _EXTRA_EMAIL = "autoteam_email"
 _EXTRA_AUTH_FILE = "autoteam_auth_file"
 _EXTRA_SOURCE = "autoteam_source"
 _EXTRA_LAST_SYNC_AT = "autoteam_last_sync_at"
+_EXTRA_INSTANCE_ID = "autoteam_instance_id"
 _EXTRA_GROUP_IDS = "autoteam_sub2api_group_ids"
 _EXTRA_GROUP_NAMES = "autoteam_sub2api_group_names"
+
+_DEFAULT_INSTANCE_ID = "default"
 
 _KIND_POOL = "pool"
 _KIND_MAIN = "main"
@@ -137,13 +141,27 @@ def _list_openai_oauth_accounts(token: str) -> list[dict]:
     return items
 
 
-def _is_managed_account(item: dict, *, kind: str | None = None) -> bool:
+def _current_instance_id(instance_id: str | None = None) -> str:
+    value = instance_id if instance_id is not None else AUTOTEAM_INSTANCE_ID
+    return str(value or "").strip() or _DEFAULT_INSTANCE_ID
+
+
+def _account_instance_id(item: dict) -> str:
+    extra = item.get("extra") or {}
+    if not isinstance(extra, dict):
+        return _DEFAULT_INSTANCE_ID
+    return str(extra.get(_EXTRA_INSTANCE_ID) or "").strip() or _DEFAULT_INSTANCE_ID
+
+
+def _is_managed_account(item: dict, *, kind: str | None = None, instance_id: str | None = None) -> bool:
     extra = item.get("extra") or {}
     if not isinstance(extra, dict):
         return False
     if extra.get(_EXTRA_SOURCE) != "autoteam" and not extra.get(_EXTRA_MANAGED):
         return False
     if kind and extra.get(_EXTRA_KIND) != kind:
+        return False
+    if _account_instance_id(item) != _current_instance_id(instance_id):
         return False
     return True
 
@@ -572,6 +590,7 @@ def _build_extra(email: str, auth_file_name: str, *, kind: str, quota_info: dict
         _EXTRA_AUTH_FILE: _remote_auth_file_name(auth_file_name),
         _EXTRA_SOURCE: "autoteam",
         _EXTRA_LAST_SYNC_AT: int(time.time()),
+        _EXTRA_INSTANCE_ID: _current_instance_id(),
         "email": email.lower(),
     }
     extra.update(_quota_extra_fields(quota_info))
