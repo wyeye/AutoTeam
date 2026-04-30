@@ -399,6 +399,39 @@ def test_post_account_login_rejects_non_team_plan(monkeypatch):
         api.post_account_login(api.LoginAccountParams(email="user@example.com"))
 
 
+def test_delete_account_uses_hard_delete_cleanup(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(api, "_playwright_lock", threading.Lock())
+    monkeypatch.setattr(api, "_current_task_id", None)
+    monkeypatch.setattr(api, "_is_main_account_email", lambda _email: False)
+    monkeypatch.setattr("autoteam.accounts.load_accounts", lambda: [{"email": "user@example.com"}])
+    monkeypatch.setattr(api._pw_executor, "run", lambda func, *args, **kwargs: func(*args, **kwargs))
+
+    def fake_hard_delete(email):
+        calls.append(email)
+        return {
+            "team_member_removed": True,
+            "invite_removed": True,
+            "local_record": True,
+            "local_auth_files": ["codex-user@example.com-team.json"],
+            "cpa_files": ["codex-user@example.com-team.json"],
+            "sub2api_accounts": ["AutoTeam | user"],
+            "cloudmail_deleted": True,
+        }
+
+    monkeypatch.setattr("autoteam.account_ops.delete_managed_account_hard", fake_hard_delete)
+
+    result = api.delete_account("user@example.com")
+
+    assert calls == ["user@example.com"]
+    assert result["message"] == "账号删除完成"
+    assert result["deleted_email"] == "user@example.com"
+    assert result["cleanup"]["team_member_removed"] is True
+    assert result["cleanup"]["local_record"] is True
+    assert api._playwright_lock.locked() is False
+
+
 def test_set_auto_check_config_persists_values_to_env(monkeypatch):
     written = {}
     restart_event = threading.Event()

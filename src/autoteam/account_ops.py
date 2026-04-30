@@ -16,6 +16,57 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 AUTH_DIR = PROJECT_ROOT / "auths"
 
 
+def _normalized_email(value):
+    return (value or "").strip().lower()
+
+
+def _find_account_case_insensitive(accounts, email):
+    email_l = _normalized_email(email)
+    for acc in accounts:
+        if _normalized_email(acc.get("email")) == email_l:
+            return acc
+    return None
+
+
+def _is_safe_auth_file_path(path, email=None):
+    """Only allow account deletion to unlink auth files owned by AutoTeam."""
+    try:
+        resolved_path = Path(path).expanduser().resolve(strict=False)
+        resolved_auth_dir = AUTH_DIR.expanduser().resolve(strict=False)
+        resolved_path.relative_to(resolved_auth_dir)
+    except Exception:
+        return False
+
+    if resolved_path.suffix != ".json":
+        return False
+
+    name = resolved_path.name.lower()
+    email_l = _normalized_email(email)
+    if email_l:
+        return name.startswith(f"codex-{email_l}-")
+    return name.startswith("codex-") and not name.startswith("codex-main-")
+
+
+def _auth_files_for_email(email, acc=None):
+    """Return safe local auth-file candidates for an account email."""
+    email_l = _normalized_email(email)
+    candidates = set()
+
+    if acc and acc.get("auth_file"):
+        auth_path = Path(acc["auth_file"])
+        if _is_safe_auth_file_path(auth_path, email_l):
+            candidates.add(auth_path)
+        else:
+            logger.warning("[账号] 跳过不安全的 auth_file 路径: %s", auth_path)
+
+    prefix = f"codex-{email_l}-"
+    for path in AUTH_DIR.glob("codex-*.json"):
+        if path.name.lower().startswith(prefix) and _is_safe_auth_file_path(path, email_l):
+            candidates.add(path)
+
+    return candidates
+
+
 def _response_excerpt(body, limit=240):
     text = str(body or "").strip().replace("\n", " ")
     if len(text) > limit:
@@ -64,6 +115,7 @@ def delete_managed_account(
     remove_remote=True,
     remove_cloudmail=True,
     sync_cpa_after=True,
+    strict_cloudmail=False,
     chatgpt_api=None,
     mail_client=None,
     remote_state=None,
@@ -72,9 +124,9 @@ def delete_managed_account(
     删除本地管理账号及其衍生资源。
     返回 cleanup 摘要，设计为幂等操作。
     """
-    email_l = email.lower()
+    email_l = _normalized_email(email)
     accounts = load_accounts()
-    acc = find_account(accounts, email)
+    acc = find_account(accounts, email) or _find_account_case_insensitive(accounts, email)
 
     cleanup = {
         "local_record": False,
@@ -92,8 +144,8 @@ def delete_managed_account(
     own_mail_client = None
 
     try:
-        account_id = get_chatgpt_account_id()
         if remove_remote:
+            account_id = get_chatgpt_account_id()
             if remote_state is not None:
                 members, invites = remote_state
             else:
@@ -136,10 +188,7 @@ def delete_managed_account(
                     raise RuntimeError(f"取消 Team 邀请失败: {email}")
                 cleanup["invite_removed"] = True
 
-        auth_candidates = set()
-        if acc and acc.get("auth_file"):
-            auth_candidates.add(Path(acc["auth_file"]))
-        auth_candidates.update(AUTH_DIR.glob(f"codex-{email}-*.json"))
+        auth_candidates = _auth_files_for_email(email_l, acc)
 
         for path in sorted(auth_candidates):
             if path.exists():
@@ -147,20 +196,16 @@ def delete_managed_account(
                 cleanup["local_auth_files"].append(path.name)
                 logger.info("[账号] 已删除本地 auth: %s", path.name)
 
-        remote_cleanup = delete_account_from_configured_targets(
-            email,
-            auth_names=list(cleanup["local_auth_files"]),
-            include_disabled=True,
-        )
-        cleanup["cpa_files"] = list((remote_cleanup.get("cpa") or {}).get("deleted", []))
-        cleanup["sub2api_accounts"] = list((remote_cleanup.get("sub2api") or {}).get("deleted", []))
+        if remove_remote:
+            remote_cleanup = delete_account_from_configured_targets(
+                email_l,
+                auth_names=list(cleanup["local_auth_files"]),
+                include_disabled=True,
+            )
+            cleanup["cpa_files"] = list((remote_cleanup.get("cpa") or {}).get("deleted", []))
+            cleanup["sub2api_accounts"] = list((remote_cleanup.get("sub2api") or {}).get("deleted", []))
 
         if acc:
-            accounts = [item for item in accounts if item["email"].lower() != email_l]
-            save_accounts(accounts)
-            cleanup["local_record"] = True
-            logger.info("[账号] 已删除本地记录: %s", email)
-
             mail_account_id = get_account_mail_account_id(acc)
             if remove_cloudmail and mail_account_id is not None:
                 try:
@@ -172,13 +217,35 @@ def delete_managed_account(
                     resp = mail_client.delete_account(mail_account_id)
                     if resp.get("code") == 200:
                         cleanup["cloudmail_deleted"] = True
+                    elif strict_cloudmail:
+                        raise RuntimeError(f"邮箱提供者返回异常: {resp}")
                 except Exception as exc:
+                    if strict_cloudmail:
+                        raise RuntimeError(f"删除邮箱提供者账户失败: {exc}") from exc
                     logger.warning("[账号] 删除邮箱提供者账户失败: %s", exc)
 
-        if sync_cpa_after:
+            accounts = [item for item in accounts if item["email"].lower() != email_l]
+            save_accounts(accounts)
+            cleanup["local_record"] = True
+            logger.info("[账号] 已删除本地记录: %s", email)
+
+        if remove_remote and sync_cpa_after:
             sync_to_cpa()
 
         return cleanup
     finally:
         if own_chatgpt:
             own_chatgpt.stop()
+
+
+def delete_managed_account_hard(email, **kwargs):
+    """Delete a dashboard-managed account and all associated resources."""
+    kwargs.update(
+        {
+            "remove_remote": True,
+            "remove_cloudmail": True,
+            "sync_cpa_after": True,
+            "strict_cloudmail": True,
+        }
+    )
+    return delete_managed_account(email, **kwargs)

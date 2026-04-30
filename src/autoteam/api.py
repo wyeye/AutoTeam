@@ -1819,7 +1819,7 @@ def delete_account(email: str):
         )
 
     try:
-        from autoteam.account_ops import delete_managed_account
+        from autoteam.account_ops import delete_managed_account_hard
         from autoteam.accounts import load_accounts
 
         if _is_main_account_email(email):
@@ -1829,7 +1829,7 @@ def delete_account(email: str):
         if not any(a["email"].lower() == email.lower() for a in accounts):
             raise HTTPException(status_code=404, detail="账号不存在")
 
-        cleanup = _pw_executor.run(delete_managed_account, email)
+        cleanup = _pw_executor.run(delete_managed_account_hard, email)
         return {
             "message": "账号删除完成",
             "deleted_email": email,
