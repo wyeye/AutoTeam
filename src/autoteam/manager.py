@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-from autoteam.account_ops import delete_managed_account, fetch_team_state
+from autoteam.account_ops import delete_managed_account, delete_managed_account_hard, fetch_team_state
 from autoteam.accounts import (
     STATUS_ACTIVE,
     STATUS_AUTH_PENDING,
@@ -302,6 +302,52 @@ def _record_auth_repair_failure(email: str, error_type: str | None = None, error
     }
     update_account(email, **state)
     return state
+
+
+def _delete_account_after_hard_auth_failure(
+    email: str,
+    error_type: str | None,
+    *,
+    chatgpt_api=None,
+    mail_client=None,
+    reason: str | None = None,
+) -> bool:
+    """Fully delete managed accounts after unrecoverable Codex OAuth failures."""
+    if error_type not in AUTH_REPAIR_HARD_FAILURE_TYPES:
+        return False
+
+    if _is_main_account_email(email):
+        logger.warning(
+            "[账号] %s 触发硬 OAuth 失败（%s），但主号禁止自动删除",
+            email,
+            _auth_repair_error_label(error_type),
+        )
+        return False
+
+    active_chatgpt = chatgpt_api if _chatgpt_session_ready(chatgpt_api) else None
+    try:
+        cleanup = delete_managed_account_hard(
+            email,
+            chatgpt_api=active_chatgpt,
+            mail_client=mail_client,
+        )
+    except Exception as exc:
+        logger.error(
+            "[账号] %s 触发硬 OAuth 失败（%s）后自动删除失败: %s",
+            email,
+            _auth_repair_error_label(error_type),
+            exc,
+        )
+        return False
+
+    logger.warning(
+        "[账号] %s 触发硬 OAuth 失败（%s%s），已自动完整删除: %s",
+        email,
+        _auth_repair_error_label(error_type),
+        f"，{reason}" if reason else "",
+        cleanup,
+    )
+    return True
 
 
 def _login_codex_with_result(email: str, password: str, *, mail_client=None, max_attempts: int = 3) -> dict:
@@ -982,12 +1028,17 @@ def cmd_check(force_auth_repair=False):
                     update_account(email, status=STATUS_ACTIVE, last_active_at=time.time())
                     logger.info("[%s] 额度可用", email)
                 elif status_str == "auth_error":
+                    error_type = login_result.get("error_type") or "non_team_plan"
+                    error_detail = login_result.get("error_detail") or "重新登录后仍无法查询额度"
                     final_status = _set_auth_pending_or_standby(email)
-                    state = _record_auth_repair_failure(
+                    state = _record_auth_repair_failure(email, error_type, error_detail)
+                    if _delete_account_after_hard_auth_failure(
                         email,
-                        login_result.get("error_type") or "non_team_plan",
-                        login_result.get("error_detail") or "重新登录后仍无法查询额度",
-                    )
+                        error_type,
+                        mail_client=mail_client,
+                        reason=error_detail,
+                    ):
+                        continue
                     extra = _auth_repair_state_suffix(state)
                     logger.warning(
                         "[%s] 重新登录后仍无法查询额度（可能未选中 Team workspace），标记为 %s%s",
@@ -996,12 +1047,17 @@ def cmd_check(force_auth_repair=False):
                         extra,
                     )
             else:
+                error_type = login_result.get("error_type")
+                error_detail = login_result.get("error_detail")
                 final_status = _set_auth_pending_or_standby(email)
-                state = _record_auth_repair_failure(
+                state = _record_auth_repair_failure(email, error_type, error_detail)
+                if _delete_account_after_hard_auth_failure(
                     email,
-                    login_result.get("error_type"),
-                    login_result.get("error_detail"),
-                )
+                    error_type,
+                    mail_client=mail_client,
+                    reason=error_detail,
+                ):
+                    continue
                 extra = _auth_repair_state_suffix(state)
                 logger.error(
                     "[%s] Codex 登录失败，标记为 %s（%s%s）",
@@ -1108,8 +1164,17 @@ def _complete_registration(email, password, invite_link, mail_client):
         logger.info("[注册] 账号就绪: %s", email)
         return email
     else:
+        error_type = login_result.get("error_type")
+        error_detail = login_result.get("error_detail")
         update_account(email, status=STATUS_AUTH_PENDING)
-        state = _record_auth_repair_failure(email, login_result.get("error_type"), login_result.get("error_detail"))
+        state = _record_auth_repair_failure(email, error_type, error_detail)
+        if _delete_account_after_hard_auth_failure(
+            email,
+            error_type,
+            mail_client=mail_client,
+            reason=error_detail,
+        ):
+            return None
         extra = _auth_repair_state_suffix(state)
         logger.warning(
             "[注册] 账号已加入 Team 但 Codex 登录失败，标记为 auth_pending: %s（%s%s）",
@@ -1914,8 +1979,17 @@ def create_account_direct(mail_client):
         logger.info("[直接注册] 账号就绪: %s", email)
         return email
     else:
+        error_type = login_result.get("error_type")
+        error_detail = login_result.get("error_detail")
         update_account(email, status=STATUS_AUTH_PENDING)
-        state = _record_auth_repair_failure(email, login_result.get("error_type"), login_result.get("error_detail"))
+        state = _record_auth_repair_failure(email, error_type, error_detail)
+        if _delete_account_after_hard_auth_failure(
+            email,
+            error_type,
+            mail_client=mail_client,
+            reason=error_detail,
+        ):
+            return None
         extra = _auth_repair_state_suffix(state)
         logger.warning(
             "[直接注册] 账号已加入 Team 但 Codex 登录失败，标记为 auth_pending: %s（%s%s）",
@@ -1963,8 +2037,18 @@ def reinvite_account(chatgpt_api, mail_client, acc):
     login_result = _login_codex_with_result(email, password, mail_client=mail_client)
     bundle = login_result.get("bundle")
     if not login_result.get("ok") or not bundle:
+        error_type = login_result.get("error_type")
+        error_detail = login_result.get("error_detail")
         final_status = _set_auth_pending_or_standby(email)
-        state = _record_auth_repair_failure(email, login_result.get("error_type"), login_result.get("error_detail"))
+        state = _record_auth_repair_failure(email, error_type, error_detail)
+        if _delete_account_after_hard_auth_failure(
+            email,
+            error_type,
+            chatgpt_api=chatgpt_api,
+            mail_client=mail_client,
+            reason=error_detail,
+        ):
+            return False
         extra = _auth_repair_state_suffix(state)
         logger.warning(
             "[轮转] 旧账号 OAuth 登录失败，标记为 %s: %s（%s%s）",
