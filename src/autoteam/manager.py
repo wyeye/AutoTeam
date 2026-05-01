@@ -93,6 +93,7 @@ def _chatgpt_session_ready(chatgpt_api) -> bool:
 
 
 AUTH_REPAIR_HARD_FAILURE_TYPES = {"add_phone", "human_verification"}
+AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES = 18
 
 
 def _normalized_email(value: str | None) -> str:
@@ -235,13 +236,33 @@ def _auth_repair_error_label(error_type: str | None) -> str:
     return mapping.get(error_type or "", error_type or "未知错误")
 
 
+def _auth_retry_after_minutes(state: dict | None, *, now: float | None = None) -> int | None:
+    state = state or {}
+    retry_after = state.get("auth_retry_after")
+    if not retry_after:
+        return None
+    if now is None:
+        now = state.get("auth_last_failed_at") or time.time()
+    remain_secs = max(0, int(retry_after - now))
+    return max(1, (remain_secs + 59) // 60)
+
+
+def _auth_failure_requires_delete(error_type: str | None, state: dict | None = None) -> bool:
+    if error_type in AUTH_REPAIR_HARD_FAILURE_TYPES:
+        return True
+    if error_type != "email_verification":
+        return False
+    retry_mins = _auth_retry_after_minutes(state)
+    return retry_mins is not None and retry_mins >= AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES
+
+
 def _auth_repair_state_suffix(state: dict | None) -> str:
     state = state or {}
     if state.get("auth_retry_paused"):
         return "，已暂停自动修复"
     retry_after = state.get("auth_retry_after")
     if retry_after:
-        mins = max(1, int((retry_after - time.time() + 59) // 60))
+        mins = _auth_retry_after_minutes(state, now=time.time()) or 1
         return f"，约 {mins} 分钟后重试"
     return ""
 
@@ -311,14 +332,15 @@ def _delete_account_after_hard_auth_failure(
     chatgpt_api=None,
     mail_client=None,
     reason: str | None = None,
+    repair_state: dict | None = None,
 ) -> bool:
     """Fully delete managed accounts after unrecoverable Codex OAuth failures."""
-    if error_type not in AUTH_REPAIR_HARD_FAILURE_TYPES:
+    if not _auth_failure_requires_delete(error_type, repair_state):
         return False
 
     if _is_main_account_email(email):
         logger.warning(
-            "[账号] %s 触发硬 OAuth 失败（%s），但主号禁止自动删除",
+            "[账号] %s 触发 OAuth 删除条件（%s），但主号禁止自动删除",
             email,
             _auth_repair_error_label(error_type),
         )
@@ -334,7 +356,7 @@ def _delete_account_after_hard_auth_failure(
         )
     except Exception as exc:
         logger.error(
-            "[账号] %s 触发硬 OAuth 失败（%s）后自动删除失败: %s",
+            "[账号] %s 触发 OAuth 删除条件（%s）后自动删除失败: %s",
             email,
             _auth_repair_error_label(error_type),
             exc,
@@ -342,7 +364,7 @@ def _delete_account_after_hard_auth_failure(
         return False
 
     logger.warning(
-        "[账号] %s 触发硬 OAuth 失败（%s%s），已自动完整删除: %s",
+        "[账号] %s 触发 OAuth 删除条件（%s%s），已自动完整删除: %s",
         email,
         _auth_repair_error_label(error_type),
         f"，{reason}" if reason else "",
@@ -1038,6 +1060,7 @@ def cmd_check(force_auth_repair=False):
                         error_type,
                         mail_client=mail_client,
                         reason=error_detail,
+                        repair_state=state,
                     ):
                         continue
                     extra = _auth_repair_state_suffix(state)
@@ -1057,6 +1080,7 @@ def cmd_check(force_auth_repair=False):
                     error_type,
                     mail_client=mail_client,
                     reason=error_detail,
+                    repair_state=state,
                 ):
                     continue
                 extra = _auth_repair_state_suffix(state)
@@ -1174,6 +1198,7 @@ def _complete_registration(email, password, invite_link, mail_client):
             error_type,
             mail_client=mail_client,
             reason=error_detail,
+            repair_state=state,
         ):
             return None
         extra = _auth_repair_state_suffix(state)
@@ -1989,6 +2014,7 @@ def create_account_direct(mail_client):
             error_type,
             mail_client=mail_client,
             reason=error_detail,
+            repair_state=state,
         ):
             return None
         extra = _auth_repair_state_suffix(state)
@@ -2048,6 +2074,7 @@ def reinvite_account(chatgpt_api, mail_client, acc):
             chatgpt_api=chatgpt_api,
             mail_client=mail_client,
             reason=error_detail,
+            repair_state=state,
         ):
             return False
         extra = _auth_repair_state_suffix(state)
