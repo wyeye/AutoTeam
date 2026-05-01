@@ -169,21 +169,27 @@ def delete_account_from_configured_targets(
     targets = get_available_sync_targets() if include_disabled else get_enabled_sync_targets()
 
     if SYNC_TARGET_CPA in targets:
-        from autoteam.cpa_sync import delete_from_cpa, list_cpa_files
+        try:
+            from autoteam.cpa_sync import delete_from_cpa, list_cpa_files
 
-        deleted = []
-        auth_name_set = set(auth_names or [])
-        for item in list_cpa_files():
-            item_email = (item.get("email") or "").lower()
-            item_name = item.get("name") or ""
-            if item_email == email.lower() or item_name in auth_name_set:
-                if delete_from_cpa(item_name):
-                    deleted.append(item_name)
-        results[SYNC_TARGET_CPA] = {"deleted": deleted, "count": len(deleted)}
+            deleted = []
+            auth_name_set = set(auth_names or [])
+            for item in list_cpa_files():
+                item_email = (item.get("email") or "").lower()
+                item_name = item.get("name") or ""
+                if item_email == email.lower() or item_name in auth_name_set:
+                    if delete_from_cpa(item_name):
+                        deleted.append(item_name)
+            results[SYNC_TARGET_CPA] = {"deleted": deleted, "count": len(deleted)}
+        except Exception as exc:
+            results[SYNC_TARGET_CPA] = {"deleted": [], "count": 0, "error": str(exc)}
 
     if SYNC_TARGET_SUB2API in targets:
-        from autoteam.sub2api_sync import delete_account_from_sub2api
+        try:
+            from autoteam.sub2api_sync import delete_account_from_sub2api
 
-        results[SYNC_TARGET_SUB2API] = delete_account_from_sub2api(email, auth_names=auth_names or [])
+            results[SYNC_TARGET_SUB2API] = delete_account_from_sub2api(email, auth_names=auth_names or [])
+        except Exception as exc:
+            results[SYNC_TARGET_SUB2API] = {"deleted": [], "count": 0, "error": str(exc)}
 
     return results

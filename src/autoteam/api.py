@@ -1829,10 +1829,30 @@ def delete_account(email: str):
         if not any(a["email"].lower() == email.lower() for a in accounts):
             raise HTTPException(status_code=404, detail="账号不存在")
 
-        cleanup = _pw_executor.run(delete_managed_account_hard, email)
-        status = get_status()
+        try:
+            cleanup = _pw_executor.run(delete_managed_account_hard, email)
+        except Exception as exc:
+            logger.exception("[API] 账号删除执行失败")
+            raise HTTPException(status_code=500, detail={"message": f"账号删除执行失败: {exc}"}) from exc
+
+        try:
+            status = get_status()
+        except Exception as exc:
+            logger.exception("[API] 账号删除后刷新状态失败")
+            status = None
+            cleanup.setdefault("errors", []).append(
+                {
+                    "layer": "status_refresh",
+                    "message": f"账号删除后刷新状态失败: {exc}",
+                }
+            )
+            cleanup["partial_failure"] = True
+
+        message = "账号删除完成"
+        if cleanup.get("partial_failure"):
+            message = "账号删除已执行（部分清理失败，请查看 cleanup.errors）"
         return {
-            "message": "账号删除完成",
+            "message": message,
             "deleted_email": email,
             "cleanup": cleanup,
             "status": status,

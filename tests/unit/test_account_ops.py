@@ -140,7 +140,7 @@ def test_delete_managed_account_hard_uses_full_cleanup_flags(monkeypatch):
     ]
 
 
-def test_delete_managed_account_strict_cloudmail_raises_on_mail_cleanup_failure(tmp_path, monkeypatch):
+def test_delete_managed_account_strict_cloudmail_records_failure_and_deletes_local(tmp_path, monkeypatch):
     auth_dir = tmp_path / "auths"
     auth_dir.mkdir()
 
@@ -166,22 +166,87 @@ def test_delete_managed_account_strict_cloudmail_raises_on_mail_cleanup_failure(
     monkeypatch.setattr(account_ops, "delete_account_from_configured_targets", lambda *args, **kwargs: {})
     monkeypatch.setattr(account_ops, "sync_to_cpa", lambda: None)
 
-    with pytest.raises(RuntimeError, match="删除邮箱提供者账户失败"):
-        account_ops.delete_managed_account(
-            "user@example.com",
-            remove_remote=False,
-            mail_client=_FailingMailClient(),
-            strict_cloudmail=True,
-        )
+    cleanup = account_ops.delete_managed_account(
+        "user@example.com",
+        remove_remote=False,
+        mail_client=_FailingMailClient(),
+        strict_cloudmail=True,
+    )
 
-    assert accounts == [
+    assert accounts == []
+    assert cleanup["local_record"] is True
+    assert cleanup["cloudmail_deleted"] is False
+    assert cleanup["partial_failure"] is True
+    assert cleanup["errors"][0]["layer"] == "cloudmail"
+
+
+def test_delete_managed_account_records_each_layer_failure_and_continues(tmp_path, monkeypatch):
+    auth_dir = tmp_path / "auths"
+    auth_dir.mkdir()
+    auth_file = auth_dir / "codex-user@example.com-team.json"
+    auth_file.write_text("{}", encoding="utf-8")
+
+    accounts = [
         {
             "email": "user@example.com",
-            "status": "standby",
-            "auth_file": None,
+            "status": "active",
+            "auth_file": str(auth_file),
             "mail_provider": "cloudmail",
             "mail_account_id": 55,
         }
+    ]
+    sync_calls = []
+
+    class _FailingChatGPT:
+        def __init__(self):
+            self.calls = []
+
+        def _api_fetch(self, method, path):
+            self.calls.append((method, path))
+            return {"status": 500, "body": "boom"}
+
+    class _FailingMailClient:
+        provider_name = "cloudmail"
+
+        def delete_account(self, _account_id):
+            raise RuntimeError("mail down")
+
+    chatgpt = _FailingChatGPT()
+    members = [{"email": "user@example.com", "user_id": "user-1"}]
+    invites = [{"email_address": "user@example.com", "id": "invite-1"}]
+
+    monkeypatch.setattr(account_ops, "AUTH_DIR", auth_dir)
+    monkeypatch.setattr(account_ops, "get_chatgpt_account_id", lambda: "acc-1")
+    monkeypatch.setattr(account_ops, "load_accounts", lambda: list(accounts))
+    monkeypatch.setattr(account_ops, "save_accounts", lambda items: accounts.clear() or accounts.extend(items))
+    monkeypatch.setattr(
+        account_ops,
+        "delete_account_from_configured_targets",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionError("remote refused")),
+    )
+    monkeypatch.setattr(account_ops, "sync_to_cpa", lambda: sync_calls.append(True))
+
+    cleanup = account_ops.delete_managed_account(
+        "user@example.com",
+        chatgpt_api=chatgpt,
+        remote_state=(members, invites),
+        mail_client=_FailingMailClient(),
+        strict_cloudmail=True,
+    )
+
+    assert ("DELETE", "/backend-api/accounts/acc-1/users/user-1") in chatgpt.calls
+    assert ("DELETE", "/backend-api/accounts/acc-1/invites/invite-1") in chatgpt.calls
+    assert cleanup["local_auth_files"] == ["codex-user@example.com-team.json"]
+    assert not auth_file.exists()
+    assert cleanup["local_record"] is True
+    assert accounts == []
+    assert sync_calls == [True]
+    assert cleanup["partial_failure"] is True
+    assert [error["layer"] for error in cleanup["errors"]] == [
+        "team_member",
+        "team_invite",
+        "sync_targets",
+        "cloudmail",
     ]
 
 

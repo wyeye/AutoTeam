@@ -437,6 +437,85 @@ def test_delete_account_uses_hard_delete_cleanup(monkeypatch):
     assert api._playwright_lock.locked() is False
 
 
+def test_delete_account_returns_json_when_cleanup_has_partial_failures(monkeypatch):
+    live_accounts = [{"email": "user@example.com", "status": "active"}]
+
+    monkeypatch.setattr(api, "_playwright_lock", threading.Lock())
+    monkeypatch.setattr(api, "_current_task_id", None)
+    monkeypatch.setattr(api, "_is_main_account_email", lambda _email: False)
+    monkeypatch.setattr("autoteam.accounts.load_accounts", lambda: list(live_accounts))
+    monkeypatch.setattr(api._pw_executor, "run", lambda func, *args, **kwargs: func(*args, **kwargs))
+    monkeypatch.setattr("autoteam.codex_auth.check_codex_quota", lambda _token: ("error", None))
+
+    def fake_hard_delete(_email):
+        live_accounts.clear()
+        return {
+            "local_record": True,
+            "local_auth_files": [],
+            "cpa_files": [],
+            "sub2api_accounts": [],
+            "team_member_removed": False,
+            "invite_removed": False,
+            "cloudmail_deleted": False,
+            "partial_failure": True,
+            "errors": [
+                {
+                    "layer": "sync_targets",
+                    "message": "删除配置远端目标失败: connection refused",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("autoteam.account_ops.delete_managed_account_hard", fake_hard_delete)
+
+    result = api.delete_account("user@example.com")
+
+    assert result["message"] == "账号删除已执行（部分清理失败，请查看 cleanup.errors）"
+    assert result["cleanup"]["partial_failure"] is True
+    assert result["cleanup"]["errors"][0]["layer"] == "sync_targets"
+    assert result["status"]["accounts"] == []
+    assert result["status"]["summary"]["total"] == 0
+
+
+def test_delete_account_returns_json_when_status_refresh_fails(monkeypatch):
+    live_accounts = [{"email": "user@example.com", "status": "active", "auth_file": "broken"}]
+
+    monkeypatch.setattr(api, "_playwright_lock", threading.Lock())
+    monkeypatch.setattr(api, "_current_task_id", None)
+    monkeypatch.setattr(api, "_is_main_account_email", lambda _email: False)
+    monkeypatch.setattr("autoteam.accounts.load_accounts", lambda: list(live_accounts))
+    monkeypatch.setattr(api._pw_executor, "run", lambda func, *args, **kwargs: func(*args, **kwargs))
+
+    def fake_hard_delete(_email):
+        live_accounts.clear()
+        return {
+            "local_record": True,
+            "local_auth_files": [],
+            "cpa_files": [],
+            "sub2api_accounts": [],
+            "team_member_removed": False,
+            "invite_removed": False,
+            "cloudmail_deleted": False,
+            "partial_failure": False,
+            "errors": [],
+        }
+
+    monkeypatch.setattr("autoteam.account_ops.delete_managed_account_hard", fake_hard_delete)
+    monkeypatch.setattr(api, "get_status", lambda: (_ for _ in ()).throw(RuntimeError("status broken")))
+
+    result = api.delete_account("user@example.com")
+
+    assert result["message"] == "账号删除已执行（部分清理失败，请查看 cleanup.errors）"
+    assert result["status"] is None
+    assert result["cleanup"]["partial_failure"] is True
+    assert result["cleanup"]["errors"] == [
+        {
+            "layer": "status_refresh",
+            "message": "账号删除后刷新状态失败: status broken",
+        }
+    ]
+
+
 def test_set_auto_check_config_persists_values_to_env(monkeypatch):
     written = {}
     restart_event = threading.Event()
