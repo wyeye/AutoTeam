@@ -168,7 +168,7 @@ def test_hard_auth_failure_helper_deletes_with_full_cleanup(monkeypatch):
     )
 
     assert deleted is True
-    assert calls == [("user@example.com", {"chatgpt_api": chatgpt, "mail_client": mail_client})]
+    assert calls == [("user@example.com", {"chatgpt_api": chatgpt, "include_disabled_sync_targets": False, "mail_client": mail_client})]
 
 
 def test_hard_auth_failure_helper_skips_retryable_failure(monkeypatch):
@@ -233,7 +233,7 @@ def test_cmd_check_auto_deletes_auth_pending_on_add_phone(monkeypatch):
     exhausted = manager.cmd_check(force_auth_repair=True)
 
     assert exhausted == []
-    assert calls == [("pending@example.com", {"chatgpt_api": None, "mail_client": mail_client})]
+    assert calls == [("pending@example.com", {"chatgpt_api": None, "include_disabled_sync_targets": False, "mail_client": mail_client})]
     assert updates[-1][0] == "pending@example.com"
     assert updates[-1][1]["auth_last_error"] == "add_phone"
 
@@ -272,7 +272,7 @@ def test_reinvite_account_auto_deletes_on_add_phone(monkeypatch):
     )
 
     assert result is False
-    assert calls == [("tmp-user@example.com", {"chatgpt_api": None, "mail_client": mail_client})]
+    assert calls == [("tmp-user@example.com", {"chatgpt_api": None, "include_disabled_sync_targets": False, "mail_client": mail_client})]
     assert updates[-1][1]["auth_last_error"] == "add_phone"
 
 
@@ -339,7 +339,7 @@ def test_complete_registration_auto_deletes_on_add_phone(monkeypatch):
     )
 
     assert result is None
-    assert calls == [("invite-user@example.com", {"chatgpt_api": None, "mail_client": mail_client})]
+    assert calls == [("invite-user@example.com", {"chatgpt_api": None, "include_disabled_sync_targets": False, "mail_client": mail_client})]
     assert updates[-1][1]["auth_last_error"] == "add_phone"
 
 
@@ -385,7 +385,7 @@ def test_create_account_direct_auto_deletes_on_add_phone(monkeypatch):
         "mail_provider": "cloudmail",
         "mail_account_id": 42,
     }
-    assert calls == [("new-user@example.com", {"chatgpt_api": None, "mail_client": mail_client})]
+    assert calls == [("new-user@example.com", {"chatgpt_api": None, "include_disabled_sync_targets": False, "mail_client": mail_client})]
     assert updates[-1][1]["auth_last_error"] == "add_phone"
 
 

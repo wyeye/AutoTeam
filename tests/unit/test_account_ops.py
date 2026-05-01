@@ -134,6 +134,7 @@ def test_delete_managed_account_hard_uses_full_cleanup_flags(monkeypatch):
                 "remove_cloudmail": True,
                 "sync_cpa_after": True,
                 "strict_cloudmail": True,
+                "include_disabled_sync_targets": True,
             },
         )
     ]
@@ -247,6 +248,52 @@ def test_delete_managed_account_full_cleanup_removes_team_invite_targets_and_syn
     assert cleanup["local_auth_files"] == ["codex-user@example.com-team.json"]
     assert cleanup["cpa_files"] == ["codex-user@example.com-team.json"]
     assert cleanup["sub2api_accounts"] == ["AutoTeam | user"]
+    assert accounts == []
+
+
+def test_delete_managed_account_can_limit_sync_target_cleanup_to_enabled_targets(tmp_path, monkeypatch):
+    auth_dir = tmp_path / "auths"
+    auth_dir.mkdir()
+    auth_file = auth_dir / "codex-user@example.com-team.json"
+    auth_file.write_text("{}", encoding="utf-8")
+
+    accounts = [
+        {
+            "email": "user@example.com",
+            "status": "active",
+            "auth_file": str(auth_file),
+            "mail_provider": "cloudmail",
+            "mail_account_id": None,
+        }
+    ]
+    remote_deletes = []
+
+    monkeypatch.setattr(account_ops, "AUTH_DIR", auth_dir)
+    monkeypatch.setattr(account_ops, "load_accounts", lambda: list(accounts))
+    monkeypatch.setattr(account_ops, "save_accounts", lambda items: accounts.clear() or accounts.extend(items))
+    monkeypatch.setattr(
+        account_ops,
+        "delete_account_from_configured_targets",
+        lambda *args, **kwargs: remote_deletes.append((args, kwargs)) or {},
+    )
+    monkeypatch.setattr(account_ops, "sync_to_cpa", lambda: None)
+
+    cleanup = account_ops.delete_managed_account(
+        "user@example.com",
+        remove_cloudmail=False,
+        sync_cpa_after=False,
+        include_disabled_sync_targets=False,
+        remote_state=([], []),
+        chatgpt_api=object(),
+    )
+
+    assert remote_deletes == [
+        (
+            ("user@example.com",),
+            {"auth_names": ["codex-user@example.com-team.json"], "include_disabled": False},
+        )
+    ]
+    assert cleanup["local_record"] is True
     assert accounts == []
 
 

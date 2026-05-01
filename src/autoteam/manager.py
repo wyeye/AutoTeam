@@ -330,6 +330,7 @@ def _delete_account_after_hard_auth_failure(
             email,
             chatgpt_api=active_chatgpt,
             mail_client=mail_client,
+            include_disabled_sync_targets=False,
         )
     except Exception as exc:
         logger.error(

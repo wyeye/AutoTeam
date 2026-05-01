@@ -119,6 +119,7 @@ def delete_managed_account(
     chatgpt_api=None,
     mail_client=None,
     remote_state=None,
+    include_disabled_sync_targets=True,
 ):
     """
     删除本地管理账号及其衍生资源。
@@ -200,7 +201,7 @@ def delete_managed_account(
             remote_cleanup = delete_account_from_configured_targets(
                 email_l,
                 auth_names=list(cleanup["local_auth_files"]),
-                include_disabled=True,
+                include_disabled=include_disabled_sync_targets,
             )
             cleanup["cpa_files"] = list((remote_cleanup.get("cpa") or {}).get("deleted", []))
             cleanup["sub2api_accounts"] = list((remote_cleanup.get("sub2api") or {}).get("deleted", []))
@@ -240,6 +241,7 @@ def delete_managed_account(
 
 def delete_managed_account_hard(email, **kwargs):
     """Delete a dashboard-managed account and all associated resources."""
+    kwargs.setdefault("include_disabled_sync_targets", True)
     kwargs.update(
         {
             "remove_remote": True,
