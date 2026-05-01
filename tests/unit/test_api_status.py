@@ -166,6 +166,7 @@ def test_get_runtime_config_returns_current_values_from_env_file(tmp_path, monke
                 "SUB2API_PROXY=Residential Pool",
                 "SUB2API_OPENAI_WS_MODE=ctx_pool",
                 "SUB2API_OPENAI_PASSTHROUGH=true",
+                "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES=24",
                 "PLAYWRIGHT_PROXY_URL=socks5://127.0.0.1:1080",
                 "PLAYWRIGHT_PROXY_BYPASS=localhost,127.0.0.1",
                 "API_KEY=runtime-key",
@@ -186,6 +187,7 @@ def test_get_runtime_config_returns_current_values_from_env_file(tmp_path, monke
         "SUB2API_PROXY",
         "SUB2API_OPENAI_WS_MODE",
         "SUB2API_OPENAI_PASSTHROUGH",
+        "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES",
         "PLAYWRIGHT_PROXY_URL",
         "PLAYWRIGHT_PROXY_BYPASS",
         "API_KEY",
@@ -208,6 +210,8 @@ def test_get_runtime_config_returns_current_values_from_env_file(tmp_path, monke
     assert fields["SUB2API_PROXY"]["runtime_required"] is False
     assert fields["SUB2API_OPENAI_WS_MODE"]["value"] == "ctx_pool"
     assert fields["SUB2API_OPENAI_PASSTHROUGH"]["value"] == "true"
+    assert fields["AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES"]["value"] == "24"
+    assert fields["AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES"]["runtime_required"] is False
     assert fields["PLAYWRIGHT_PROXY_URL"]["value"] == "socks5://127.0.0.1:1080"
     assert fields["PLAYWRIGHT_PROXY_URL"]["runtime_required"] is False
     assert fields["PLAYWRIGHT_PROXY_BYPASS"]["value"] == "localhost,127.0.0.1"
@@ -522,23 +526,31 @@ def test_set_auto_check_config_persists_values_to_env(monkeypatch):
     sync_calls = []
 
     monkeypatch.setattr("autoteam.setup_wizard._write_env", lambda key, value: written.setdefault(key, value))
-    monkeypatch.setattr(api, "_auto_check_config", {"interval": 300, "threshold": 10, "min_low": 2})
+    monkeypatch.setattr(
+        api,
+        "_auto_check_config",
+        {"interval": 300, "threshold": 10, "min_low": 2, "auth_delete_retry_after_minutes": 18},
+    )
     monkeypatch.setattr(api, "_auto_check_restart", restart_event)
     monkeypatch.setattr(api, "_sync_runtime_env_reload_state", lambda: sync_calls.append("synced"))
 
-    result = api.set_auto_check_config(api.AutoCheckConfig(interval=420, threshold=15, min_low=3))
+    result = api.set_auto_check_config(
+        api.AutoCheckConfig(interval=420, threshold=15, min_low=3, auth_delete_retry_after_minutes=12)
+    )
 
-    assert result == {"interval": 420, "threshold": 15, "min_low": 3}
+    assert result == {"interval": 420, "threshold": 15, "min_low": 3, "auth_delete_retry_after_minutes": 12}
     assert written == {
         "AUTO_CHECK_INTERVAL": "420",
         "AUTO_CHECK_THRESHOLD": "15",
         "AUTO_CHECK_MIN_LOW": "3",
+        "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES": "12",
     }
     assert restart_event.is_set() is True
     assert sync_calls == ["synced"]
     assert os.environ["AUTO_CHECK_INTERVAL"] == "420"
     assert os.environ["AUTO_CHECK_THRESHOLD"] == "15"
     assert os.environ["AUTO_CHECK_MIN_LOW"] == "3"
+    assert os.environ["AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES"] == "12"
 
 
 @pytest.mark.parametrize(
@@ -550,6 +562,7 @@ def test_set_auto_check_config_persists_values_to_env(monkeypatch):
         ({"SUB2API_RATE_MULTIPLIER": "0"}, "SUB2API_RATE_MULTIPLIER 必须是大于 0 的数字"),
         ({"SUB2API_AUTO_PAUSE_ON_EXPIRED": "maybe"}, "SUB2API_AUTO_PAUSE_ON_EXPIRED 必须是 true 或 false"),
         ({"SUB2API_OPENAI_WS_MODE": "socket"}, "SUB2API_OPENAI_WS_MODE 必须是 off、ctx_pool 或 passthrough"),
+        ({"AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES": "0"}, "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES 必须是正整数"),
     ],
 )
 def test_put_runtime_config_rejects_invalid_sub2api_default_settings(monkeypatch, payload, message):

@@ -53,6 +53,7 @@ REQUIRED_CONFIGS = [
     ("SUB2API_OVERWRITE_ACCOUNT_SETTINGS", "Sub2API 同步时覆盖账号默认设置（true/false）", "false", True),
     ("PLAYWRIGHT_PROXY_URL", "Playwright 浏览器代理 URL（可选，如 socks5://host:port）", "", True),
     ("PLAYWRIGHT_PROXY_BYPASS", "Playwright 代理绕过列表（可选，如 localhost,127.0.0.1）", "", True),
+    ("AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES", "邮箱验证码卡住自动删除阈值（分钟）", "18", True),
     ("API_KEY", "API 鉴权密钥（回车自动生成）", "", False),
 ]
 

@@ -543,7 +543,7 @@ const runtimeCategoryKeys = {
     'SUB2API_OVERWRITE_ACCOUNT_SETTINGS',
     'SUB2API_PROXY',
   ],
-  proxy: ['PLAYWRIGHT_PROXY_URL', 'PLAYWRIGHT_PROXY_BYPASS'],
+  proxy: ['PLAYWRIGHT_PROXY_URL', 'PLAYWRIGHT_PROXY_BYPASS', 'AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES'],
   security: ['API_KEY'],
 }
 
@@ -789,7 +789,7 @@ function setSourceMessage(text, type = 'success') {
 }
 
 function fieldInputType(key) {
-  if (['SUB2API_CONCURRENCY', 'SUB2API_PRIORITY', 'SUB2API_RATE_MULTIPLIER'].includes(key)) {
+  if (['SUB2API_CONCURRENCY', 'SUB2API_PRIORITY', 'SUB2API_RATE_MULTIPLIER', 'AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES'].includes(key)) {
     return 'number'
   }
   return key.includes('PASSWORD') || key.includes('KEY') ? 'password' : 'text'

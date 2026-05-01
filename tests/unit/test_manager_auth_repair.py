@@ -203,6 +203,26 @@ def test_email_verification_failure_does_not_delete_before_18_minutes():
     assert manager._auth_failure_requires_delete("email_verification", state) is False
 
 
+def test_email_verification_failure_uses_configurable_delete_threshold(monkeypatch):
+    monkeypatch.setattr(manager, "_auth_repair_delete_retry_after_minutes", lambda: 12)
+    state = {
+        "auth_last_failed_at": 1_700_000_000,
+        "auth_retry_after": 1_700_000_720,
+    }
+
+    assert manager._auth_failure_requires_delete("email_verification", state) is True
+
+
+def test_email_verification_failure_keeps_retrying_below_configured_threshold(monkeypatch):
+    monkeypatch.setattr(manager, "_auth_repair_delete_retry_after_minutes", lambda: 12)
+    state = {
+        "auth_last_failed_at": 1_700_000_000,
+        "auth_retry_after": 1_700_000_660,
+    }
+
+    assert manager._auth_failure_requires_delete("email_verification", state) is False
+
+
 def test_cmd_check_auto_deletes_auth_pending_on_add_phone(monkeypatch):
     calls = []
     updates = []
@@ -309,6 +329,62 @@ def test_cmd_check_auto_deletes_auth_pending_on_email_verification_18_minute_ret
     assert updates[-1][0] == "pending@example.com"
     assert updates[-1][1]["auth_last_error"] == "email_verification"
     assert updates[-1][1]["auth_retry_after"] == 1_700_001_080
+
+
+def test_cmd_check_auto_deletes_auth_pending_on_configured_email_verification_retry(monkeypatch):
+    calls = []
+    updates = []
+    mail_client = _FakeMailClient()
+
+    monkeypatch.setattr(
+        manager,
+        "load_accounts",
+        lambda: [
+            {
+                "email": "pending@example.com",
+                "status": "auth_pending",
+                "password": "",
+                "auth_file": None,
+                "mail_provider": "cloudmail",
+                "auth_retry_count": 0,
+                "auth_last_error": None,
+                "auth_retry_after": None,
+                "auth_retry_paused": False,
+            }
+        ],
+    )
+    monkeypatch.setattr(manager, "_auth_repair_retry_delays", lambda: (720, 1200, 1800))
+    monkeypatch.setattr(manager, "_auth_repair_delete_retry_after_minutes", lambda: 12)
+    monkeypatch.setattr(manager, "_is_main_account_email", lambda _email: False)
+    monkeypatch.setattr(manager, "get_mail_domain", lambda: "@example.com")
+    monkeypatch.setattr(manager, "_get_account_mail_client", lambda _acc: mail_client)
+    monkeypatch.setattr(manager, "_is_email_in_team", lambda _email: True)
+    monkeypatch.setattr(manager, "update_account", lambda email, **kwargs: updates.append((email, kwargs)))
+    monkeypatch.setattr(manager.time, "time", lambda: 1_700_000_000)
+    monkeypatch.setattr(
+        manager,
+        "_login_codex_with_result",
+        lambda email, password, mail_client=None: {
+            "ok": False,
+            "bundle": None,
+            "error_type": "email_verification",
+            "error_detail": "卡在邮箱验证码页",
+            "retryable": True,
+        },
+    )
+    monkeypatch.setattr(
+        manager,
+        "delete_managed_account_hard",
+        lambda email, **kwargs: calls.append((email, kwargs)) or {"local_record": True, "team_member_removed": True},
+    )
+
+    exhausted = manager.cmd_check(force_auth_repair=True)
+
+    assert exhausted == []
+    assert calls == [("pending@example.com", {"chatgpt_api": None, "include_disabled_sync_targets": False, "mail_client": mail_client})]
+    assert updates[-1][0] == "pending@example.com"
+    assert updates[-1][1]["auth_last_error"] == "email_verification"
+    assert updates[-1][1]["auth_retry_after"] == 1_700_000_720
 
 
 def test_reinvite_account_auto_deletes_on_add_phone(monkeypatch):

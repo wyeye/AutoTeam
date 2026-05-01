@@ -93,7 +93,6 @@ def _chatgpt_session_ready(chatgpt_api) -> bool:
 
 
 AUTH_REPAIR_HARD_FAILURE_TYPES = {"add_phone", "human_verification"}
-AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES = 18
 
 
 def _normalized_email(value: str | None) -> str:
@@ -219,6 +218,19 @@ def _auth_repair_retry_delays() -> tuple[int, int, int]:
     return (interval * 2, interval * 4, interval * 6)
 
 
+def _auth_repair_delete_retry_after_minutes() -> int:
+    from autoteam.config import AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES
+
+    threshold = AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES
+    try:
+        from autoteam.api import _auto_check_config
+
+        threshold = int(_auto_check_config.get("auth_delete_retry_after_minutes", threshold) or threshold)
+    except Exception:
+        pass
+    return max(1, int(threshold))
+
+
 def _auth_repair_error_label(error_type: str | None) -> str:
     mapping = {
         "add_phone": "手机号验证",
@@ -253,7 +265,7 @@ def _auth_failure_requires_delete(error_type: str | None, state: dict | None = N
     if error_type != "email_verification":
         return False
     retry_mins = _auth_retry_after_minutes(state)
-    return retry_mins is not None and retry_mins >= AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES
+    return retry_mins is not None and retry_mins >= _auth_repair_delete_retry_after_minutes()
 
 
 def _auth_repair_state_suffix(state: dict | None) -> str:

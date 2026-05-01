@@ -104,6 +104,7 @@ class SetupConfig(BaseModel):
     SUB2API_OVERWRITE_ACCOUNT_SETTINGS: str | bool = "false"
     PLAYWRIGHT_PROXY_URL: str = ""
     PLAYWRIGHT_PROXY_BYPASS: str = ""
+    AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES: str | int = "18"
     API_KEY: str = ""
 
 
@@ -164,6 +165,7 @@ _ALL_RUNTIME_ENV_KEYS = [
     "AUTO_CHECK_INTERVAL",
     "AUTO_CHECK_THRESHOLD",
     "AUTO_CHECK_MIN_LOW",
+    "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES",
     "PLAYWRIGHT_PROXY_URL",
     "PLAYWRIGHT_PROXY_SERVER",
     "PLAYWRIGHT_PROXY_USERNAME",
@@ -554,6 +556,7 @@ def _validate_runtime_optional_values(values: dict[str, str]):
     _normalize_bool("SUB2API_AUTO_PAUSE_ON_EXPIRED")
     _normalize_bool("SUB2API_OPENAI_PASSTHROUGH")
     _normalize_bool("SUB2API_OVERWRITE_ACCOUNT_SETTINGS")
+    _normalize_positive_int("AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES")
 
     ws_mode = str(normalized.get("SUB2API_OPENAI_WS_MODE", "") or "").strip().lower()
     if ws_mode:
@@ -581,11 +584,17 @@ def _sync_runtime_globals():
         return
 
     try:
-        from autoteam.config import AUTO_CHECK_INTERVAL, AUTO_CHECK_MIN_LOW, AUTO_CHECK_THRESHOLD
+        from autoteam.config import (
+            AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES,
+            AUTO_CHECK_INTERVAL,
+            AUTO_CHECK_MIN_LOW,
+            AUTO_CHECK_THRESHOLD,
+        )
 
         auto_check_config["interval"] = AUTO_CHECK_INTERVAL
         auto_check_config["threshold"] = AUTO_CHECK_THRESHOLD
         auto_check_config["min_low"] = AUTO_CHECK_MIN_LOW
+        auto_check_config["auth_delete_retry_after_minutes"] = max(1, int(AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES))
         if auto_check_restart is not None:
             auto_check_restart.set()
     except Exception:
@@ -2322,6 +2331,9 @@ def get_task(task_id: str):
 # ---------------------------------------------------------------------------
 
 from autoteam.config import (
+    AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES as _DEFAULT_AUTH_DELETE_RETRY_AFTER_MINUTES,
+)
+from autoteam.config import (
     AUTO_CHECK_INTERVAL as _DEFAULT_INTERVAL,
 )
 from autoteam.config import (
@@ -2336,6 +2348,7 @@ _auto_check_config = {
     "interval": _DEFAULT_INTERVAL,
     "threshold": _DEFAULT_THRESHOLD,
     "min_low": _DEFAULT_MIN_LOW,
+    "auth_delete_retry_after_minutes": max(1, int(_DEFAULT_AUTH_DELETE_RETRY_AFTER_MINUTES)),
 }
 _auto_check_stop = threading.Event()
 _auto_check_restart = threading.Event()  # 配置变更时通知线程重启
@@ -2817,6 +2830,7 @@ class AutoCheckConfig(BaseModel):
     interval: int = 300  # 巡检间隔（秒）
     threshold: int = 10  # 额度阈值（%）
     min_low: int = 2  # 触发轮转的最少账号数
+    auth_delete_retry_after_minutes: int | None = None  # 邮箱验证码页卡住多久后直接删除账号（分钟）
 
 
 def _normalized_auto_check_config(cfg: AutoCheckConfig | dict[str, int]) -> dict[str, int]:
@@ -2824,15 +2838,25 @@ def _normalized_auto_check_config(cfg: AutoCheckConfig | dict[str, int]) -> dict
         interval = cfg.interval
         threshold = cfg.threshold
         min_low = cfg.min_low
+        auth_delete_retry_after_minutes = (
+            cfg.auth_delete_retry_after_minutes
+            if cfg.auth_delete_retry_after_minutes is not None
+            else _auto_check_config.get("auth_delete_retry_after_minutes", _DEFAULT_AUTH_DELETE_RETRY_AFTER_MINUTES)
+        )
     else:
         interval = cfg.get("interval", _auto_check_config.get("interval", _DEFAULT_INTERVAL))
         threshold = cfg.get("threshold", _auto_check_config.get("threshold", _DEFAULT_THRESHOLD))
         min_low = cfg.get("min_low", _auto_check_config.get("min_low", _DEFAULT_MIN_LOW))
+        auth_delete_retry_after_minutes = cfg.get(
+            "auth_delete_retry_after_minutes",
+            _auto_check_config.get("auth_delete_retry_after_minutes", _DEFAULT_AUTH_DELETE_RETRY_AFTER_MINUTES),
+        )
 
     return {
         "interval": max(60, int(interval)),
         "threshold": max(1, min(100, int(threshold))),
         "min_low": max(1, int(min_low)),
+        "auth_delete_retry_after_minutes": max(1, int(auth_delete_retry_after_minutes)),
     }
 
 
@@ -2854,6 +2878,7 @@ def set_auto_check_config(cfg: AutoCheckConfig):
         "AUTO_CHECK_INTERVAL": str(normalized["interval"]),
         "AUTO_CHECK_THRESHOLD": str(normalized["threshold"]),
         "AUTO_CHECK_MIN_LOW": str(normalized["min_low"]),
+        "AUTH_REPAIR_DELETE_RETRY_AFTER_MINUTES": str(normalized["auth_delete_retry_after_minutes"]),
     }
     for key, value in persisted.items():
         os.environ[key] = value
@@ -2862,10 +2887,11 @@ def set_auto_check_config(cfg: AutoCheckConfig):
     _sync_runtime_env_reload_state()
     _auto_check_restart.set()  # 唤醒巡检线程，立即应用新配置
     logger.info(
-        "[巡检] 配置已更新并持久化: 间隔=%ds 阈值=%d%% 触发=%d个",
+        "[巡检] 配置已更新并持久化: 间隔=%ds 阈值=%d%% 触发=%d个 邮箱验证删除阈值=%d分钟",
         _auto_check_config["interval"],
         _auto_check_config["threshold"],
         _auto_check_config["min_low"],
+        _auto_check_config["auth_delete_retry_after_minutes"],
     )
     return _auto_check_config.copy()
 
