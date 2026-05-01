@@ -401,15 +401,18 @@ def test_post_account_login_rejects_non_team_plan(monkeypatch):
 
 def test_delete_account_uses_hard_delete_cleanup(monkeypatch):
     calls = []
+    live_accounts = [{"email": "user@example.com", "status": "standby"}]
 
     monkeypatch.setattr(api, "_playwright_lock", threading.Lock())
     monkeypatch.setattr(api, "_current_task_id", None)
     monkeypatch.setattr(api, "_is_main_account_email", lambda _email: False)
-    monkeypatch.setattr("autoteam.accounts.load_accounts", lambda: [{"email": "user@example.com"}])
+    monkeypatch.setattr("autoteam.accounts.load_accounts", lambda: list(live_accounts))
     monkeypatch.setattr(api._pw_executor, "run", lambda func, *args, **kwargs: func(*args, **kwargs))
+    monkeypatch.setattr("autoteam.codex_auth.check_codex_quota", lambda _token: ("error", None))
 
     def fake_hard_delete(email):
         calls.append(email)
+        live_accounts.clear()
         return {
             "team_member_removed": True,
             "invite_removed": True,
@@ -429,6 +432,8 @@ def test_delete_account_uses_hard_delete_cleanup(monkeypatch):
     assert result["deleted_email"] == "user@example.com"
     assert result["cleanup"]["team_member_removed"] is True
     assert result["cleanup"]["local_record"] is True
+    assert result["status"]["accounts"] == []
+    assert result["status"]["summary"]["total"] == 0
     assert api._playwright_lock.locked() is False
 
 

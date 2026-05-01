@@ -168,7 +168,7 @@ const props = defineProps({
     default: null,
   },
 })
-const emit = defineEmits(['refresh'])
+const emit = defineEmits(['refresh', 'status-updated'])
 
 const actionEmail = ref('')
 const actionType = ref('')
@@ -367,6 +367,9 @@ async function removeAccount(email) {
   message.value = ''
   try {
     const result = await api.deleteAccount(email)
+    if (result.status) {
+      emit('status-updated', result.status)
+    }
     message.value = result.message || `已删除 ${email}`
     messageClass.value = 'bg-green-500/10 text-green-400 border-green-500/20'
     emit('refresh')

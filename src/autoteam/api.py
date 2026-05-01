@@ -1830,10 +1830,12 @@ def delete_account(email: str):
             raise HTTPException(status_code=404, detail="账号不存在")
 
         cleanup = _pw_executor.run(delete_managed_account_hard, email)
+        status = get_status()
         return {
             "message": "账号删除完成",
             "deleted_email": email,
             "cleanup": cleanup,
+            "status": status,
         }
     finally:
         _playwright_lock.release()

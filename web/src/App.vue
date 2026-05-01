@@ -122,7 +122,8 @@
 
       <!-- 页面内容 -->
         <Dashboard v-if="currentPage === 'dashboard'"
-          :status="status" :loading="loading" :running-task="busyTask" :admin-status="adminStatus" @refresh="refresh" />
+          :status="status" :loading="loading" :running-task="busyTask" :admin-status="adminStatus"
+          @refresh="refresh" @status-updated="applyStatusUpdate" />
 
         <ConfigPage
           v-else-if="currentPage === 'config'"
@@ -246,19 +247,51 @@ function doLogout() {
 async function refresh() {
   loading.value = true
   try {
-    const [s, t, admin, codex, manualAccount] = await Promise.all([
+    const [statusResult, tasksResult, adminResult, codexResult, manualAccountResult] = await Promise.allSettled([
       api.getStatus(),
       api.getTasks(),
       api.getAdminStatus(),
       api.getMainCodexStatus(),
       api.getManualAccountStatus(),
     ])
-    status.value = s
-    tasks.value = t
-    adminStatus.value = admin
-    codexStatus.value = codex
-    manualAccountStatus.value = manualAccount
-    runningTask.value = t.find(t => t.status === 'running' || t.status === 'pending') || null
+
+    for (const result of [statusResult, tasksResult, adminResult, codexResult, manualAccountResult]) {
+      if (result.status === 'rejected' && result.reason?.status === 401) {
+        authenticated.value = false
+        return
+      }
+    }
+
+    if (statusResult.status === 'fulfilled') {
+      status.value = statusResult.value
+    } else {
+      console.error('刷新账号状态失败:', statusResult.reason)
+    }
+
+    if (tasksResult.status === 'fulfilled') {
+      tasks.value = tasksResult.value
+      runningTask.value = tasksResult.value.find(t => t.status === 'running' || t.status === 'pending') || null
+    } else {
+      console.error('刷新任务状态失败:', tasksResult.reason)
+    }
+
+    if (adminResult.status === 'fulfilled') {
+      adminStatus.value = adminResult.value
+    } else {
+      console.error('刷新管理员状态失败:', adminResult.reason)
+    }
+
+    if (codexResult.status === 'fulfilled') {
+      codexStatus.value = codexResult.value
+    } else {
+      console.error('刷新主号 Codex 状态失败:', codexResult.reason)
+    }
+
+    if (manualAccountResult.status === 'fulfilled') {
+      manualAccountStatus.value = manualAccountResult.value
+    } else {
+      console.error('刷新手动账号状态失败:', manualAccountResult.reason)
+    }
   } catch (e) {
     if (e.status === 401) {
       authenticated.value = false
@@ -267,6 +300,12 @@ async function refresh() {
     console.error('刷新失败:', e)
   } finally {
     loading.value = false
+  }
+}
+
+function applyStatusUpdate(nextStatus) {
+  if (nextStatus) {
+    status.value = nextStatus
   }
 }
 
